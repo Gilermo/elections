@@ -1,0 +1,1739 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>SANKEY Experiment</title>
+<link href="https://fonts.googleapis.com/css?family=Source+Sans+Pro" rel="stylesheet">	
+<style>
+	* {		
+		font-family: 'Source Sans Pro', sans-serif;		
+}
+.node rect {
+  cursor: move;
+  fill-opacity: .9;
+  shape-rendering: crispEdges;
+}
+
+.node text {
+  pointer-events: none;
+  text-shadow: 0 1px 0 #fff;
+}
+
+.link {
+  fill: none;
+  stroke: #000;
+  stroke-opacity: .2;
+}
+
+.link:hover {
+  stroke-opacity: .5;
+}
+div.tooltipsankey {   
+  position: absolute;           
+  text-align: left;           
+  width: 95px;                  
+  height: 40px;                 
+  padding: 4px;                   
+  background: silver;   
+  border: 0px;      
+  border-radius: 8px;           
+  pointer-events: none; 
+  visibility: hidden;        
+}
+
+</style>
+<body>
+
+<p id="chart">
+
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<!-- <script src="sankey_h.js"></script>
+ --><script>
+d3.sankey = function() {
+  var sankey = {},
+      nodeWidth = 24,
+      nodePadding = 8,
+      size = [1, 1],
+      nodes = [],
+      links = [];
+
+  sankey.nodeWidth = function(_) {
+    if (!arguments.length) return nodeWidth;
+    nodeWidth = +_;
+    return sankey;
+  };
+
+  sankey.nodePadding = function(_) {
+    if (!arguments.length) return nodePadding;
+    nodePadding = +_;
+    return sankey;
+  };
+
+  sankey.nodes = function(_) {
+    if (!arguments.length) return nodes;
+    nodes = _;
+    return sankey;
+  };
+
+  sankey.links = function(_) {
+    if (!arguments.length) return links;
+    links = _;
+    return sankey;
+  };
+
+  sankey.size = function(_) {
+    if (!arguments.length) return size;
+    size = _;
+    return sankey;
+  };
+
+  sankey.layout = function(iterations) {
+    computeNodeLinks();
+    computeNodeValues();
+    computeNodeBreadths();
+    computeNodeDepths(iterations);
+    computeLinkDepths();
+    return sankey;
+  };
+
+  sankey.relayout = function() {
+    computeLinkDepths();
+    return sankey;
+  };
+
+  sankey.link = function() {
+    var curvature = .5;
+
+    function link(d) {
+      var x0 = d.source.x + d.source.dx,
+          x1 = d.target.x,
+          xi = d3.interpolateNumber(x0, x1),
+          x2 = xi(curvature),
+          x3 = xi(1 - curvature),
+          y0 = d.source.y + d.sy + d.dy / 2,
+          y1 = d.target.y + d.ty + d.dy / 2;
+      return "M" + x0 + "," + y0
+           + "C" + x2 + "," + y0
+           + " " + x3 + "," + y1
+           + " " + x1 + "," + y1;
+    }
+
+    link.curvature = function(_) {
+      if (!arguments.length) return curvature;
+      curvature = +_;
+      return link;
+    };
+
+    return link;
+  };
+
+  // Populate the sourceLinks and targetLinks for each node.
+  // Also, if the source and target are not objects, assume they are indices.
+  function computeNodeLinks() {
+    nodes.forEach(function(node) {
+      node.sourceLinks = [];
+      node.targetLinks = [];
+    });
+    links.forEach(function(link) {
+      var source = link.source,
+          target = link.target;
+      if (typeof source === "number") source = link.source = nodes[link.source];
+      if (typeof target === "number") target = link.target = nodes[link.target];
+      source.sourceLinks.push(link);
+      target.targetLinks.push(link);
+    });
+  }
+
+  // Compute the value (size) of each node by summing the associated links.
+  function computeNodeValues() {
+    nodes.forEach(function(node) {
+      node.value = Math.max(
+        d3.sum(node.sourceLinks, value),
+        d3.sum(node.targetLinks, value)
+      );
+    });
+  }
+
+  // Iteratively assign the breadth (x-position) for each node.
+  // Nodes are assigned the maximum breadth of incoming neighbors plus one;
+  // nodes with no incoming links are assigned breadth zero, while
+  // nodes with no outgoing links are assigned the maximum breadth.
+  function computeNodeBreadths() {
+    var remainingNodes = nodes,
+        nextNodes,
+        x = 0;
+
+    while (remainingNodes.length) {
+      nextNodes = [];
+      remainingNodes.forEach(function(node) {
+        node.x = x;
+        node.dx = nodeWidth;
+        node.sourceLinks.forEach(function(link) {
+          nextNodes.push(link.target);
+        });
+      });
+      remainingNodes = nextNodes;
+      ++x;
+    }
+
+    //
+    moveSinksRight(x);
+    scaleNodeBreadths((width - nodeWidth) / (x - 1));
+  }
+
+  function moveSourcesRight() {
+    nodes.forEach(function(node) {
+      if (!node.targetLinks.length) {
+        node.x = d3.min(node.sourceLinks, function(d) { return d.target.x; }) - 1;
+      }
+    });
+  }
+
+  function moveSinksRight(x) {
+    nodes.forEach(function(node) {
+      if (!node.sourceLinks.length) {
+        node.x = x - 1;
+      }
+    });
+  }
+
+  function scaleNodeBreadths(kx) {
+    nodes.forEach(function(node) {
+      node.x *= kx;
+    });
+  }
+
+  function computeNodeDepths(iterations) {
+    var nodesByBreadth = d3.nest()
+        .key(function(d) { return d.x; })
+        .sortKeys(d3.ascending)
+        .entries(nodes)
+        .map(function(d) { return d.values; });
+
+    //
+    initializeNodeDepth();
+    resolveCollisions();
+    for (var alpha = 1; iterations > 0; --iterations) {
+      relaxRightToLeft(alpha *= .99);
+      resolveCollisions();
+      relaxLeftToRight(alpha);
+      resolveCollisions();
+    }
+
+    function initializeNodeDepth() {
+      var ky = d3.min(nodesByBreadth, function(nodes) {
+        return (size[1] - (nodes.length - 1) * nodePadding) / d3.sum(nodes, value);
+      });
+
+      nodesByBreadth.forEach(function(nodes) {
+        nodes.forEach(function(node, i) {
+          node.y = i;
+          node.dy = node.value * ky;
+        });
+      });
+
+      links.forEach(function(link) {
+        link.dy = link.value * ky;
+      });
+    }
+
+    function relaxLeftToRight(alpha) {
+      nodesByBreadth.forEach(function(nodes, breadth) {
+        nodes.forEach(function(node) {
+          if (node.targetLinks.length) {
+            var y = d3.sum(node.targetLinks, weightedSource) / d3.sum(node.targetLinks, value);
+            node.y += (y - center(node)) * alpha;
+          }
+        });
+      });
+
+      function weightedSource(link) {
+        return center(link.source) * link.value;
+      }
+    }
+
+    function relaxRightToLeft(alpha) {
+      nodesByBreadth.slice().reverse().forEach(function(nodes) {
+        nodes.forEach(function(node) {
+          if (node.sourceLinks.length) {
+            var y = d3.sum(node.sourceLinks, weightedTarget) / d3.sum(node.sourceLinks, value);
+            node.y += (y - center(node)) * alpha;
+          }
+        });
+      });
+
+      function weightedTarget(link) {
+        return center(link.target) * link.value;
+      }
+    }
+
+    function resolveCollisions() {
+      nodesByBreadth.forEach(function(nodes) {
+        var node,
+            dy,
+            y0 = 0,
+            n = nodes.length,
+            i;
+
+        // Push any overlapping nodes down.
+        nodes.sort(ascendingDepth);
+        for (i = 0; i < n; ++i) {
+          node = nodes[i];
+          dy = y0 - node.y;
+          if (dy > 0) node.y += dy;
+          y0 = node.y + node.dy + nodePadding;
+        }
+
+        // If the bottommost node goes outside the bounds, push it back up.
+        dy = y0 - nodePadding - size[1];
+        if (dy > 0) {
+          y0 = node.y -= dy;
+
+          // Push any overlapping nodes back up.
+          for (i = n - 2; i >= 0; --i) {
+            node = nodes[i];
+            dy = node.y + node.dy + nodePadding - y0;
+            if (dy > 0) node.y -= dy;
+            y0 = node.y;
+          }
+        }
+      });
+    }
+
+    function ascendingDepth(a, b) {
+      return a.y - b.y;
+    }
+  }
+
+  function computeLinkDepths() {
+    nodes.forEach(function(node) {
+      node.sourceLinks.sort(ascendingTargetDepth);
+      node.targetLinks.sort(ascendingSourceDepth);
+    });
+    nodes.forEach(function(node) {
+      var sy = 0, ty = 0;
+      node.sourceLinks.forEach(function(link) {
+        link.sy = sy;
+        sy += link.dy;
+      });
+      node.targetLinks.forEach(function(link) {
+        link.ty = ty;
+        ty += link.dy;
+      });
+    });
+
+    function ascendingSourceDepth(a, b) {
+      return a.source.y - b.source.y;
+    }
+
+    function ascendingTargetDepth(a, b) {
+      return a.target.y - b.target.y;
+    }
+  }
+
+  function center(node) {
+    return node.y + node.dy / 2;
+  }
+
+  function value(link) {
+    return link.value;
+  }
+
+  return sankey;
+};
+var units = "Widgets";
+
+var margin = {top: 50, right: 50, bottom: 50, left: 50},
+    width = 1400 - margin.left - margin.right,
+    height = 1000 - margin.top - margin.bottom;
+
+var formatNumber = d3.format(",.0f"),    // zero decimal places
+    format = function(d) { return formatNumber(d) + " " + units; },
+    color = d3.scale.category20();
+
+var tooltip = d3.select("body")
+		 .append("g")
+		 .style("visibility", "hidden")
+		 .style("text-align", "center")
+		 .style("position", "absolute")
+		 .style("z-index", "10")
+		 .style("background-color", "hsla(0, 0%, 20%, 0.9)")
+		 .style("color", "white")
+		 .style("padding", "4px 10px 4px 10px")
+		 .style("border-radius", "6px")
+		 .style("-moz-border-radius", "6px")
+		 .style("-webkit-border-radius", "6px")
+
+// append the svg canvas to the page
+var svg = d3.select("#chart").append("svg")
+    .attr("width", width + margin.left + margin.right)
+    .attr("height", height + margin.top + margin.bottom)
+  .append("g")
+    .attr("transform", 
+          "translate(" + margin.left + "," + margin.top + ")");
+
+    text = svg.append('text')
+	  .text('1996')
+		.attr('transform', 'translate(0,-20)')
+		.attr('font-size', 22)
+
+	text = svg.append('text')
+	  .text('1999')
+		.attr('transform', 'translate(208,-20)')
+				.attr('font-size', 22)
+
+
+	text = svg.append('text')
+	  .text('2003')
+		.attr('transform', 'translate(421,-20)')
+				.attr('font-size', 22)
+
+
+	text = svg.append('text')
+	  .text('2006')
+		.attr('transform', 'translate(630,-20)')
+				.attr('font-size', 22)
+
+
+	text = svg.append('text')
+	  .text('2009')
+		.attr('transform', 'translate(841,-20)')
+				.attr('font-size', 22)
+
+
+	text = svg.append('text')
+	  .text('2013')
+		.attr('transform', 'translate(1052,-20)')
+				.attr('font-size', 22)
+
+
+	text = svg.append('text')
+	  .text('2015')
+		.attr('transform', 'translate(1262,-20)')
+				.attr('font-size', 22)
+
+
+// Set the sankey diagram properties
+var sankey = d3.sankey()
+    .nodeWidth(36)
+    .nodePadding(40)
+    .size([width, height])
+    .layout(0);
+
+var path = sankey.link();
+
+function handlePartyName(str){
+	return str.replace(/[_-]/g, ' ').replace(/([0-9]{4})/, '($1)');
+}
+
+var colors_dict = {'Balad_1999': '#f46d43',
+ 'Balad_2003': '#f46d43',
+ 'Balad_2006': '#f46d43',
+ 'Balad_2009': '#f46d43',
+ 'Balad_2013': '#f46d43',
+ 'Centre Party_1999': '#fddaec',
+ 'Hadash-Balad_1996': '#d53e4f',
+ 'Hadash-Taal_2003': '#d53e4f',
+ 'Hadash_1999': '#d53e4f',
+ 'Hadash_2006': '#d53e4f',
+ 'Hadash_2009': '#d53e4f',
+ 'Hadash_2013': '#d53e4f',
+ 'Hatnua_2013': '#decbe4',
+ 'Joint List_2015': '#d53e4f',
+ 'Kadima_2006': '#fddaec',
+ 'Kadima_2009': '#fddaec',
+ 'Kadima_2013': '#fddaec',
+ 'Kulanu_2015': '#fddaec',
+ 'Labour Party_1996': '#fbb4ae',
+ 'Labour Party_1999': '#fbb4ae',
+ 'Labour Party_2003': '#fbb4ae',
+ 'Labour Party_2006': '#fbb4ae',
+ 'Labour Party_2009': '#fbb4ae',
+ 'Labour Party_2013': '#fbb4ae',
+ 'Likud Beitenu_2013': '#b3cde3',
+ 'Likud_1996': '#b3cde3',
+ 'Likud_1999': '#b3cde3',
+ 'Likud_2003': '#b3cde3',
+ 'Likud_2006': '#b3cde3',
+ 'Likud_2009': '#b3cde3',
+ 'Likud_2015': '#b3cde3',
+ 'Madaa-Raam_1996': '#fdae61',
+ 'Meretz_1996': '#ccebc5',
+ 'Meretz_1999': '#ccebc5',
+ 'Meretz_2003': '#ccebc5',
+ 'Meretz_2006': '#ccebc5',
+ 'Meretz_2009': '#ccebc5',
+ 'Meretz_2013': '#ccebc5',
+ 'Meretz_2015': '#ccebc5',
+ 'Moledet_1996': '#ffffcc',
+ 'National Religious Party_1996': '#fed9a6',
+ 'National Religious Party_1999': '#fed9a6',
+ 'National Religious Party_2003': '#fed9a6',
+ 'National Religious Party_2006': '#fed9a6',
+ 'National Religious Party_2009': '#fed9a6',
+ 'National Union_1999': '#b3cde3',
+ 'National Union_2003': '#b3cde3',
+ 'National Union_2009': '#b3cde3',
+ 'One Nation_1999': '#fbb4ae',
+ 'One Nation_2003': '#fbb4ae',
+ 'Raam-Taal_2006': '#fdae61',
+ 'Raam-Taal_2009': '#fdae61',
+ 'Raam-Taal_2013': '#fdae61',
+ 'Raam_1999': '#fdae61',
+ 'Raam_2003': '#fdae61',
+ 'Senior Citizens Party_2006': '#ffffcc',
+ 'Shas_1996': '#999999',
+ 'Shas_1999': '#999999',
+ 'Shas_2003': '#999999',
+ 'Shas_2006': '#999999',
+ 'Shas_2009': '#999999',
+ 'Shas_2013': '#999999',
+ 'Shas_2015': '#999999',
+ 'Shinui_1999': '#f1e2cc',
+ 'Shinui_2003': '#f1e2cc',
+ 'The Jewish Home_2013': '#fed9a6',
+ 'The Jewish Home_2015': '#fed9a6',
+ 'Third Way_1996': '#ffffcc',
+ 'United Torah Judaism_1996': '#4d4d4d',
+ 'United Torah Judaism_1999': '#4d4d4d',
+ 'United Torah Judaism_2003': '#4d4d4d',
+ 'United Torah Judaism_2006': '#4d4d4d',
+ 'United Torah Judaism_2009': '#4d4d4d',
+ 'United Torah Judaism_2013': '#4d4d4d',
+ 'United Torah Judaism_2015': '#4d4d4d',
+ 'Yachad_2015': '#ffffcc',
+ 'Yesh Atid_2013': '#f1e2cc',
+ 'Yesh Atid_2015': '#f1e2cc',
+ 'Yisrael Baaliya_1996': '#8dd3c7',
+ 'Yisrael Baaliya_1999': '#8dd3c7',
+ 'Yisrael Baaliya_2003': '#8dd3c7',
+ 'Yisrael Beiteinu_2015': '#bebada',
+ 'Yisrael Beitenu_1999': '#bebada',
+ 'Yisrael Beitenu_2006': '#bebada',
+ 'Yisrael Beitenu_2009': '#bebada',
+ 'Zionist Union_2015': '#fbb4ae'}
+
+var data = {
+	'links': [{
+			'source': 'Madaa-Raam_1996',
+			'target': 'Raam_1999',
+			'value': 23.476963000000001
+		}, {
+			'source': 'Hadash-Balad_1996',
+			'target': 'Balad_1999',
+			'value': 11.298482
+		}, {
+			'source': 'Hadash-Balad_1996',
+			'target': 'Hadash_1999',
+			'value': 23.166848999999999
+		}, {
+			'source': 'Hadash-Balad_1996',
+			'target': 'Raam_1999',
+			'value': 10.941322999999999
+		}, {
+			'source': 'Meretz_1996',
+			'target': 'Meretz_1999',
+			'value': 55.334575999999998
+		}, {
+			'source': 'Meretz_1996',
+			'target': 'Labour Party_1999',
+			'value': 20.223983999999998
+		}, {
+			'source': 'Labour Party_1996',
+			'target': 'Meretz_1999',
+			'value': 18.994907999999999
+		}, {
+			'source': 'Labour Party_1996',
+			'target': 'Labour Party_1999',
+			'value': 191.129051
+		}, {
+			'source': 'Labour Party_1996',
+			'target': 'Shinui_1999',
+			'value': 35.464252999999999
+		}, {
+			'source': 'Labour Party_1996',
+			'target': 'Centre Party_1999',
+			'value': 22.430865000000001
+		}, {
+			'source': 'Third Way_1996',
+			'target': 'Shinui_1999',
+			'value': 5.8293109999999997
+		}, {
+			'source': 'Third Way_1996',
+			'target': 'Labour Party_1999',
+			'value': 7.6027199999999997
+		}, {
+			'source': 'Third Way_1996',
+			'target': 'Centre Party_1999',
+			'value': 10.489027
+		}, {
+			'source': 'Likud_1996',
+			'target': 'One Nation_1999',
+			'value': 17.125751999999999
+		}, {
+			'source': 'Third Way_1996',
+			'target': 'Likud_1999',
+			'value': 7.0724880000000008
+		}, {
+			'source': 'Likud_1996',
+			'target': 'Meretz_1999',
+			'value': 8.5132410000000007
+		}, {
+			'source': 'Likud_1996',
+			'target': 'Centre Party_1999',
+			'value': 21.756318
+		}, {
+			'source': 'Likud_1996',
+			'target': 'Likud_1999',
+			'value': 142.591084
+		}, {
+			'source': 'Likud_1996',
+			'target': 'Shinui_1999',
+			'value': 17.596001000000001
+		}, {
+			'source': 'Likud_1996',
+			'target': 'Yisrael Baaliya_1999',
+			'value': 15.09056
+		}, {
+			'source': 'Likud_1996',
+			'target': 'Yisrael Beitenu_1999',
+			'value': 9.7518240000000009
+		}, {
+			'source': 'Likud_1996',
+			'target': 'National Religious Party_1999',
+			'value': 7.9798589999999994
+		}, {
+			'source': 'Likud_1996',
+			'target': 'National Union_1999',
+			'value': 5.4222550000000007
+		}, {
+			'source': 'Yisrael Baaliya_1996',
+			'target': 'Yisrael Baaliya_1999',
+			'value': 38.889239000000003
+		}, {
+			'source': 'Yisrael Baaliya_1996',
+			'target': 'Yisrael Beitenu_1999',
+			'value': 16.880829000000002
+		}, {
+			'source': 'National Religious Party_1996',
+			'target': 'National Religious Party_1999',
+			'value': 36.663340000000005
+		}, {
+			'source': 'National Religious Party_1996',
+			'target': 'National Union_1999',
+			'value': 20.834886999999998
+		}, {
+			'source': 'National Religious Party_1996',
+			'target': 'Shas_1999',
+			'value': 17.576018999999999
+		}, {
+			'source': 'National Religious Party_1996',
+			'target': 'United Torah Judaism_1999',
+			'value': 5.8715789999999997
+		}, {
+			'source': 'Moledet_1996',
+			'target': 'Shas_1999',
+			'value': 18.841976000000003
+		}, {
+			'source': 'Shas_1996',
+			'target': 'Shas_1999',
+			'value': 88.761075000000005
+		}, {
+			'source': 'United Torah Judaism_1996',
+			'target': 'United Torah Judaism_1999',
+			'value': 33.512886999999999
+		}, {
+			'source': 'Raam_1999',
+			'target': 'Raam_2003',
+			'value': 21.067164000000002
+		}, {
+			'source': 'Raam_1999',
+			'target': 'Balad_2003',
+			'value': 5.5636900000000002
+		}, {
+			'source': 'Raam_1999',
+			'target': 'Hadash-Taal_2003',
+			'value': 5.5641169999999995
+		}, {
+			'source': 'Balad_1999',
+			'target': 'Balad_2003',
+			'value': 13.772773000000001
+		}, {
+			'source': 'Hadash_1999',
+			'target': 'Hadash-Taal_2003',
+			'value': 24.013413
+		}, {
+			'source': 'Meretz_1999',
+			'target': 'Meretz_2003',
+			'value': 48.02366
+		}, {
+			'source': 'Labour Party_1999',
+			'target': 'Labour Party_2003',
+			'value': 141.186226
+		}, {
+			'source': 'Labour Party_1999',
+			'target': 'Shinui_2003',
+			'value': 68.127304000000009
+		}, {
+			'source': 'One Nation_1999',
+			'target': 'One Nation_2003',
+			'value': 8.7140899999999988
+		}, {
+			'source': 'One Nation_1999',
+			'target': 'Likud_2003',
+			'value': 9.47499
+		}, {
+			'source': 'Meretz_1999',
+			'target': 'Shinui_2003',
+			'value': 30.413309999999999
+		}, {
+			'source': 'Shinui_1999',
+			'target': 'Likud_2003',
+			'value': 37.675259999999994
+		}, {
+			'source': 'Shinui_1999',
+			'target': 'Shinui_2003',
+			'value': 16.202582
+		}, {
+			'source': 'Centre Party_1999',
+			'target': 'Likud_2003',
+			'value': 43.169284999999995
+		}, {
+			'source': 'Centre Party_1999',
+			'target': 'Shinui_2003',
+			'value': 10.032220000000001
+		}, {
+			'source': 'Likud_1999',
+			'target': 'Likud_2003',
+			'value': 150.33223799999999
+		}, {
+			'source': 'Yisrael Baaliya_1999',
+			'target': 'Likud_2003',
+			'value': 29.423878999999999
+		}, {
+			'source': 'Yisrael Baaliya_1999',
+			'target': 'Shinui_2003',
+			'value': 8.6176460000000006
+		}, {
+			'source': 'Yisrael Baaliya_1999',
+			'target': 'Yisrael Baaliya_2003',
+			'value': 10.454143
+		}, {
+			'source': 'Yisrael Baaliya_1999',
+			'target': 'National Union_2003',
+			'value': 6.6473850000000008
+		}, {
+			'source': 'National Religious Party_1999',
+			'target': 'National Religious Party_2003',
+			'value': 35.705317000000001
+		}, {
+			'source': 'National Religious Party_1999',
+			'target': 'National Union_2003',
+			'value': 5.1651739999999995
+		}, {
+			'source': 'Yisrael Beitenu_1999',
+			'target': 'National Union_2003',
+			'value': 22.400580999999999
+		}, {
+			'source': 'National Union_1999',
+			'target': 'National Religious Party_2003',
+			'value': 6.8517380000000001
+		}, {
+			'source': 'National Union_1999',
+			'target': 'National Union_2003',
+			'value': 14.017723000000002
+		}, {
+			'source': 'Shas_1999',
+			'target': 'One Nation_2003',
+			'value': 8.7333059999999989
+		}, {
+			'source': 'Shas_1999',
+			'target': 'Shas_2003',
+			'value': 81.086950999999999
+		}, {
+			'source': 'Shas_1999',
+			'target': 'National Union_2003',
+			'value': 5.0496220000000003
+		}, {
+			'source': 'Shas_1999',
+			'target': 'Likud_2003',
+			'value': 35.414993000000003
+		}, {
+			'source': 'Shas_1999',
+			'target': 'Yisrael Baaliya_2003',
+			'value': 8.0696030000000007
+		}, {
+			'source': 'United Torah Judaism_1999',
+			'target': 'United Torah Judaism_2003',
+			'value': 40.383659000000002
+		}, {
+			'source': 'Raam_2003',
+			'target': 'Raam-Taal_2006',
+			'value': 21.721920999999998
+		}, {
+			'source': 'Balad_2003',
+			'target': 'Balad_2006',
+			'value': 16.066275000000001
+		}, {
+			'source': 'Hadash-Taal_2003',
+			'target': 'Hadash_2006',
+			'value': 25.048929000000001
+		}, {
+			'source': 'Meretz_2003',
+			'target': 'Meretz_2006',
+			'value': 36.435766999999998
+		}, {
+			'source': 'Meretz_2003',
+			'target': 'Labour Party_2006',
+			'value': 17.966508999999999
+		}, {
+			'source': 'Labour Party_2003',
+			'target': 'Kadima_2006',
+			'value': 58.464904000000004
+		}, {
+			'source': 'Labour Party_2003',
+			'target': 'Labour Party_2006',
+			'value': 60.153886
+		}, {
+			'source': 'Labour Party_2003',
+			'target': 'Senior Citizens Party_2006',
+			'value': 32.260028999999996
+		}, {
+			'source': 'Shinui_2003',
+			'target': 'Senior Citizens Party_2006',
+			'value': 9.5951409999999999
+		}, {
+			'source': 'Shinui_2003',
+			'target': 'Kadima_2006',
+			'value': 118.530506
+		}, {
+			'source': 'Likud_2003',
+			'target': 'Labour Party_2006',
+			'value': 52.280566999999998
+		}, {
+			'source': 'Likud_2003',
+			'target': 'Senior Citizens Party_2006',
+			'value': 29.611726000000001
+		}, {
+			'source': 'Likud_2003',
+			'target': 'Kadima_2006',
+			'value': 47.622219999999999
+		}, {
+			'source': 'Likud_2003',
+			'target': 'Likud_2006',
+			'value': 96.530985000000001
+		}, {
+			'source': 'Likud_2003',
+			'target': 'Yisrael Beitenu_2006',
+			'value': 21.529177999999998
+		}, {
+			'source': 'Likud_2003',
+			'target': 'National Religious Party_2006',
+			'value': 27.761228000000003
+		}, {
+			'source': 'Likud_2003',
+			'target': 'Shas_2006',
+			'value': 17.445392000000002
+		}, {
+			'source': 'Likud_2003',
+			'target': 'United Torah Judaism_2006',
+			'value': 5.2402259999999998
+		}, {
+			'source': 'Yisrael Baaliya_2003',
+			'target': 'Yisrael Beitenu_2006',
+			'value': 22.442530999999999
+		}, {
+			'source': 'One Nation_2003',
+			'target': 'Kadima_2006',
+			'value': 6.4685120000000005
+		}, {
+			'source': 'One Nation_2003',
+			'target': 'Labour Party_2006',
+			'value': 17.574579999999997
+		}, {
+			'source': 'National Union_2003',
+			'target': 'Yisrael Beitenu_2006',
+			'value': 57.668409999999994
+		}, {
+			'source': 'National Religious Party_2003',
+			'target': 'National Religious Party_2006',
+			'value': 43.862617
+		}, {
+			'source': 'Shas_2003',
+			'target': 'Shas_2006',
+			'value': 85.803806000000009
+		}, {
+			'source': 'United Torah Judaism_2003',
+			'target': 'United Torah Judaism_2006',
+			'value': 44.775672999999998
+		}, {
+			'source': 'Raam-Taal_2006',
+			'target': 'Raam-Taal_2009',
+			'value': 29.586611999999999
+		}, {
+			'source': 'Balad_2006',
+			'target': 'Balad_2009',
+			'value': 22.613683999999999
+		}, {
+			'source': 'Hadash_2006',
+			'target': 'Hadash_2009',
+			'value': 29.125378000000001
+		}, {
+			'source': 'Meretz_2006',
+			'target': 'Meretz_2009',
+			'value': 16.65541
+		}, {
+			'source': 'Meretz_2006',
+			'target': 'Labour Party_2009',
+			'value': 18.652307999999998
+		}, {
+			'source': 'Labour Party_2006',
+			'target': 'Kadima_2009',
+			'value': 54.756801000000003
+		}, {
+			'source': 'Labour Party_2006',
+			'target': 'Labour Party_2009',
+			'value': 62.538909999999994
+		}, {
+			'source': 'Labour Party_2006',
+			'target': 'Likud_2009',
+			'value': 17.048544
+		}, {
+			'source': 'Labour Party_2006',
+			'target': 'Meretz_2009',
+			'value': 12.870830999999999
+		}, {
+			'source': 'Labour Party_2006',
+			'target': 'National Religious Party_2009',
+			'value': 8.8350600000000004
+		}, {
+			'source': 'Senior Citizens Party_2006',
+			'target': 'Labour Party_2009',
+			'value': 11.201816000000001
+		}, {
+			'source': 'Senior Citizens Party_2006',
+			'target': 'Kadima_2009',
+			'value': 51.656658
+		}, {
+			'source': 'Kadima_2006',
+			'target': 'Yisrael Beitenu_2009',
+			'value': 27.562813000000002
+		}, {
+			'source': 'Kadima_2006',
+			'target': 'Likud_2009',
+			'value': 67.782679000000002
+		}, {
+			'source': 'Kadima_2006',
+			'target': 'Labour Party_2009',
+			'value': 13.086492
+		}, {
+			'source': 'Kadima_2006',
+			'target': 'Kadima_2009',
+			'value': 125.363619
+		}, {
+			'source': 'Likud_2006',
+			'target': 'Likud_2009',
+			'value': 95.396268000000006
+		}, {
+			'source': 'National Religious Party_2006',
+			'target': 'Likud_2009',
+			'value': 30.294117
+		}, {
+			'source': 'National Religious Party_2006',
+			'target': 'National Religious Party_2009',
+			'value': 17.680947
+		}, {
+			'source': 'National Religious Party_2006',
+			'target': 'National Union_2009',
+			'value': 27.853217999999998
+		}, {
+			'source': 'Yisrael Beitenu_2006',
+			'target': 'Yisrael Beitenu_2009',
+			'value': 93.08211
+		}, {
+			'source': 'Shas_2006',
+			'target': 'Likud_2009',
+			'value': 21.200848999999998
+		}, {
+			'source': 'Shas_2006',
+			'target': 'Shas_2009',
+			'value': 79.980513000000002
+		}, {
+			'source': 'United Torah Judaism_2006',
+			'target': 'Shas_2009',
+			'value': 5.0296580000000004
+		}, {
+			'source': 'United Torah Judaism_2006',
+			'target': 'United Torah Judaism_2009',
+			'value': 44.740665999999997
+		}, {
+			'source': 'Raam-Taal_2009',
+			'target': 'Raam-Taal_2013',
+			'value': 30.020468000000001
+		}, {
+			'source': 'Balad_2009',
+			'target': 'Balad_2013',
+			'value': 17.706443
+		}, {
+			'source': 'Balad_2009',
+			'target': 'Raam-Taal_2013',
+			'value': 5.1897129999999994
+		}, {
+			'source': 'Hadash_2009',
+			'target': 'Hadash_2013',
+			'value': 30.522342999999999
+		}, {
+			'source': 'Meretz_2009',
+			'target': 'Meretz_2013',
+			'value': 30.460431
+		}, {
+			'source': 'Labour Party_2009',
+			'target': 'Meretz_2013',
+			'value': 22.188977999999999
+		}, {
+			'source': 'Labour Party_2009',
+			'target': 'Labour Party_2013',
+			'value': 49.890999000000001
+		}, {
+			'source': 'Labour Party_2009',
+			'target': 'Hatnua_2013',
+			'value': 6.730639
+		}, {
+			'source': 'Labour Party_2009',
+			'target': 'Yesh Atid_2013',
+			'value': 18.105933
+		}, {
+			'source': 'Labour Party_2009',
+			'target': 'Kadima_2013',
+			'value': 5.5083779999999996
+		}, {
+			'source': 'Kadima_2009',
+			'target': 'Labour Party_2013',
+			'value': 60.359285999999997
+		}, {
+			'source': 'Kadima_2009',
+			'target': 'Hatnua_2013',
+			'value': 40.876701000000004
+		}, {
+			'source': 'Kadima_2009',
+			'target': 'Yesh Atid_2013',
+			'value': 130.592072
+		}, {
+			'source': 'Likud_2009',
+			'target': 'Yesh Atid_2013',
+			'value': 6.532127
+		}, {
+			'source': 'Likud_2009',
+			'target': 'Likud Beitenu_2013',
+			'value': 155.43221399999999
+		}, {
+			'source': 'Likud_2009',
+			'target': 'Labour Party_2013',
+			'value': 6.8252139999999999
+		}, {
+			'source': 'Likud_2009',
+			'target': 'Kadima_2013',
+			'value': 15.481045999999999
+		}, {
+			'source': 'Likud_2009',
+			'target': 'The Jewish Home_2013',
+			'value': 32.970009000000005
+		}, {
+			'source': 'Yisrael Beitenu_2009',
+			'target': 'Hatnua_2013',
+			'value': 5.9284610000000004
+		}, {
+			'source': 'Yisrael Beitenu_2009',
+			'target': 'Likud Beitenu_2013',
+			'value': 91.772408999999996
+		}, {
+			'source': 'Yisrael Beitenu_2009',
+			'target': 'Shas_2013',
+			'value': 10.007772000000001
+		}, {
+			'source': 'Yisrael Beitenu_2009',
+			'target': 'The Jewish Home_2013',
+			'value': 9.9157340000000005
+		}, {
+			'source': 'National Religious Party_2009',
+			'target': 'The Jewish Home_2013',
+			'value': 25.354614999999999
+		}, {
+			'source': 'National Union_2009',
+			'target': 'The Jewish Home_2013',
+			'value': 23.945741000000002
+		}, {
+			'source': 'National Union_2009',
+			'target': 'United Torah Judaism_2013',
+			'value': 9.2624230000000001
+		}, {
+			'source': 'Shas_2009',
+			'target': 'Shas_2013',
+			'value': 81.679288999999997
+		}, {
+			'source': 'Shas_2009',
+			'target': 'United Torah Judaism_2013',
+			'value': 5.8764400000000006
+		}, {
+			'source': 'United Torah Judaism_2009',
+			'target': 'United Torah Judaism_2013',
+			'value': 45.250780999999996
+		}, {
+			'source': 'Raam-Taal_2013',
+			'target': 'Joint List_2015',
+			'value': 39.284692999999997
+		}, {
+			'source': 'Balad_2013',
+			'target': 'Joint List_2015',
+			'value': 27.510975999999999
+		}, {
+			'source': 'Hadash_2013',
+			'target': 'Joint List_2015',
+			'value': 32.177140999999999
+		}, {
+			'source': 'Meretz_2013',
+			'target': 'Meretz_2015',
+			'value': 28.033921000000003
+		}, {
+			'source': 'Meretz_2013',
+			'target': 'Zionist Union_2015',
+			'value': 20.877369000000002
+		}, {
+			'source': 'Labour Party_2013',
+			'target': 'Meretz_2015',
+			'value': 10.957048
+		}, {
+			'source': 'Labour Party_2013',
+			'target': 'Zionist Union_2015',
+			'value': 111.647407
+		}, {
+			'source': 'Hatnua_2013',
+			'target': 'Zionist Union_2015',
+			'value': 12.956746000000001
+		}, {
+			'source': 'Hatnua_2013',
+			'target': 'Yesh Atid_2015',
+			'value': 13.775869
+		}, {
+			'source': 'Hatnua_2013',
+			'target': 'Kulanu_2015',
+			'value': 15.208942
+		}, {
+			'source': 'Hatnua_2013',
+			'target': 'Likud_2015',
+			'value': 11.732635999999999
+		}, {
+			'source': 'Yesh Atid_2013',
+			'target': 'Zionist Union_2015',
+			'value': 51.623251000000003
+		}, {
+			'source': 'Yesh Atid_2013',
+			'target': 'Yesh Atid_2015',
+			'value': 75.228676000000007
+		}, {
+			'source': 'Yesh Atid_2013',
+			'target': 'Kulanu_2015',
+			'value': 14.072035000000001
+		}, {
+			'source': 'Yesh Atid_2013',
+			'target': 'Likud_2015',
+			'value': 8.1324269999999999
+		}, {
+			'source': 'Kadima_2013',
+			'target': 'Kulanu_2015',
+			'value': 21.236242000000001
+		}, {
+			'source': 'Likud Beitenu_2013',
+			'target': 'Likud_2015',
+			'value': 174.055813
+		}, {
+			'source': 'Likud Beitenu_2013',
+			'target': 'Kulanu_2015',
+			'value': 25.668998999999999
+		}, {
+			'source': 'Likud Beitenu_2013',
+			'target': 'Yisrael Beiteinu_2015',
+			'value': 51.331685
+		}, {
+			'source': 'Yesh Atid_2013',
+			'target': 'The Jewish Home_2015',
+			'value': 5.1359149999999998
+		}, {
+			'source': 'The Jewish Home_2013',
+			'target': 'Likud_2015',
+			'value': 34.513709999999996
+		}, {
+			'source': 'The Jewish Home_2013',
+			'target': 'The Jewish Home_2015',
+			'value': 58.698767000000004
+		}, {
+			'source': 'Shas_2013',
+			'target': 'Likud_2015',
+			'value': 20.516373999999999
+		}, {
+			'source': 'Shas_2013',
+			'target': 'Shas_2015',
+			'value': 53.195925000000003
+		}, {
+			'source': 'Shas_2013',
+			'target': 'Yachad_2015',
+			'value': 20.440652
+		}, {
+			'source': 'United Torah Judaism_2013',
+			'target': 'United Torah Judaism_2015',
+			'value': 50.983198000000002
+		}
+	],
+	'nodes': [{
+			'color': '#decbe4',
+			'name': 'Madaa-Raam_1996',
+			'node': 'Madaa-Raam_1996',
+			'seats': 4
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Hadash-Balad_1996',
+			'node': 'Hadash-Balad_1996',
+			'seats': 5
+		}, {
+			'color': '#ccebc5',
+			'name': 'Meretz_1996',
+			'node': 'Meretz_1996',
+			'seats': 9
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Labour Party_1996',
+			'node': 'Labour Party_1996',
+			'seats': 34
+		}, {
+			'color': '#ffffcc',
+			'name': 'Third Way_1996',
+			'node': 'Third Way_1996',
+			'seats': 4
+		}, {
+			'color': '#b3cde3',
+			'name': 'Likud_1996',
+			'node': 'Likud_1996',
+			'seats': 32
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yisrael Baaliya_1996',
+			'node': 'Yisrael Baaliya_1996',
+			'seats': 7
+		}, {
+			'color': '#fed9a6',
+			'name': 'National Religious Party_1996',
+			'node': 'National Religious Party_1996',
+			'seats': 9
+		}, {
+			'color': '#ffffcc',
+			'name': 'Moledet_1996',
+			'node': 'Moledet_1996',
+			'seats': 2
+		}, {
+			'color': '#999999',
+			'name': 'Shas_1996',
+			'node': 'Shas_1996',
+			'seats': 10
+		}, {
+			'color': '#4d4d4d',
+			'name': 'United Torah Judaism_1996',
+			'node': 'United Torah Judaism_1996',
+			'seats': 4
+		}, {
+			'color': '#decbe4',
+			'name': 'Raam_1999',
+			'node': 'Raam_1999',
+			'seats': 5
+		}, {
+			'color': '#ccebc5',
+			'name': 'Balad_1999',
+			'node': 'Balad_1999',
+			'seats': 2
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Hadash_1999',
+			'node': 'Hadash_1999',
+			'seats': 3
+		}, {
+			'color': '#ccebc5',
+			'name': 'Meretz_1999',
+			'node': 'Meretz_1999',
+			'seats': 10
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Labour Party_1999',
+			'node': 'Labour Party_1999',
+			'seats': 26
+		}, {
+			'color': '#fbb4ae',
+			'name': 'One Nation_1999',
+			'node': 'One Nation_1999',
+			'seats': 2
+		}, {
+			'color': '#f1e2cc',
+			'name': 'Shinui_1999',
+			'node': 'Shinui_1999',
+			'seats': 6
+		}, {
+			'color': '#b3cde3',
+			'name': 'Centre Party_1999',
+			'node': 'Centre Party_1999',
+			'seats': 6
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yisrael Baaliya_1999',
+			'node': 'Yisrael Baaliya_1999',
+			'seats': 6
+		}, {
+			'color': '#b3cde3',
+			'name': 'Likud_1999',
+			'node': 'Likud_1999',
+			'seats': 19
+		}, {
+			'color': '#fed9a6',
+			'name': 'National Religious Party_1999',
+			'node': 'National Religious Party_1999',
+			'seats': 5
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yisrael Beitenu_1999',
+			'node': 'Yisrael Beitenu_1999',
+			'seats': 4
+		}, {
+			'color': '#b3cde3',
+			'name': 'National Union_1999',
+			'node': 'National Union_1999',
+			'seats': 4
+		}, {
+			'color': '#999999',
+			'name': 'Shas_1999',
+			'node': 'Shas_1999',
+			'seats': 17
+		}, {
+			'color': '#4d4d4d',
+			'name': 'United Torah Judaism_1999',
+			'node': 'United Torah Judaism_1999',
+			'seats': 5
+		}, {
+			'color': '#decbe4',
+			'name': 'Raam_2003',
+			'node': 'Raam_2003',
+			'seats': 2
+		}, {
+			'color': '#ccebc5',
+			'name': 'Balad_2003',
+			'node': 'Balad_2003',
+			'seats': 3
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Hadash-Taal_2003',
+			'node': 'Hadash-Taal_2003',
+			'seats': 3
+		}, {
+			'color': '#ccebc5',
+			'name': 'Meretz_2003',
+			'node': 'Meretz_2003',
+			'seats': 6
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Labour Party_2003',
+			'node': 'Labour Party_2003',
+			'seats': 19
+		}, {
+			'color': '#f1e2cc',
+			'name': 'Shinui_2003',
+			'node': 'Shinui_2003',
+			'seats': 15
+		}, {
+			'color': '#b3cde3',
+			'name': 'Likud_2003',
+			'node': 'Likud_2003',
+			'seats': 38
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yisrael Baaliya_2003',
+			'node': 'Yisrael Baaliya_2003',
+			'seats': 2
+		}, {
+			'color': '#fbb4ae',
+			'name': 'One Nation_2003',
+			'node': 'One Nation_2003',
+			'seats': 3
+		}, {
+			'color': '#b3cde3',
+			'name': 'National Union_2003',
+			'node': 'National Union_2003',
+			'seats': 7
+		}, {
+			'color': '#fed9a6',
+			'name': 'National Religious Party_2003',
+			'node': 'National Religious Party_2003',
+			'seats': 6
+		}, {
+			'color': '#999999',
+			'name': 'Shas_2003',
+			'node': 'Shas_2003',
+			'seats': 11
+		}, {
+			'color': '#4d4d4d',
+			'name': 'United Torah Judaism_2003',
+			'node': 'United Torah Judaism_2003',
+			'seats': 5
+		}, {
+			'color': '#decbe4',
+			'name': 'Raam-Taal_2006',
+			'node': 'Raam-Taal_2006',
+			'seats': 4
+		}, {
+			'color': '#ccebc5',
+			'name': 'Balad_2006',
+			'node': 'Balad_2006',
+			'seats': 3
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Hadash_2006',
+			'node': 'Hadash_2006',
+			'seats': 3
+		}, {
+			'color': '#ccebc5',
+			'name': 'Meretz_2006',
+			'node': 'Meretz_2006',
+			'seats': 5
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Labour Party_2006',
+			'node': 'Labour Party_2006',
+			'seats': 19
+		}, {
+			'color': '#ccebc5',
+			'name': 'Senior Citizens Party_2006',
+			'node': 'Senior Citizens Party_2006',
+			'seats': 7
+		}, {
+			'color': '#b3cde3',
+			'name': 'Kadima_2006',
+			'node': 'Kadima_2006',
+			'seats': 29
+		}, {
+			'color': '#b3cde3',
+			'name': 'Likud_2006',
+			'node': 'Likud_2006',
+			'seats': 12
+		}, {
+			'color': '#fed9a6',
+			'name': 'National Religious Party_2006',
+			'node': 'National Religious Party_2006',
+			'seats': 9
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yisrael Beitenu_2006',
+			'node': 'Yisrael Beitenu_2006',
+			'seats': 11
+		}, {
+			'color': '#999999',
+			'name': 'Shas_2006',
+			'node': 'Shas_2006',
+			'seats': 12
+		}, {
+			'color': '#4d4d4d',
+			'name': 'United Torah Judaism_2006',
+			'node': 'United Torah Judaism_2006',
+			'seats': 6
+		}, {
+			'color': '#decbe4',
+			'name': 'Raam-Taal_2009',
+			'node': 'Raam-Taal_2009',
+			'seats': 4
+		}, {
+			'color': '#ccebc5',
+			'name': 'Balad_2009',
+			'node': 'Balad_2009',
+			'seats': 3
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Hadash_2009',
+			'node': 'Hadash_2009',
+			'seats': 4
+		}, {
+			'color': '#ccebc5',
+			'name': 'Meretz_2009',
+			'node': 'Meretz_2009',
+			'seats': 3
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Labour Party_2009',
+			'node': 'Labour Party_2009',
+			'seats': 13
+		}, {
+			'color': '#b3cde3',
+			'name': 'Kadima_2009',
+			'node': 'Kadima_2009',
+			'seats': 28
+		}, {
+			'color': '#b3cde3',
+			'name': 'Likud_2009',
+			'node': 'Likud_2009',
+			'seats': 27
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yisrael Beitenu_2009',
+			'node': 'Yisrael Beitenu_2009',
+			'seats': 15
+		}, {
+			'color': '#fed9a6',
+			'name': 'National Religious Party_2009',
+			'node': 'National Religious Party_2009',
+			'seats': 3
+		}, {
+			'color': '#b3cde3',
+			'name': 'National Union_2009',
+			'node': 'National Union_2009',
+			'seats': 4
+		}, {
+			'color': '#999999',
+			'name': 'Shas_2009',
+			'node': 'Shas_2009',
+			'seats': 11
+		}, {
+			'color': '#4d4d4d',
+			'name': 'United Torah Judaism_2009',
+			'node': 'United Torah Judaism_2009',
+			'seats': 5
+		}, {
+			'color': '#decbe4',
+			'name': 'Raam-Taal_2013',
+			'node': 'Raam-Taal_2013',
+			'seats': 4
+		}, {
+			'color': '#ccebc5',
+			'name': 'Balad_2013',
+			'node': 'Balad_2013',
+			'seats': 3
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Hadash_2013',
+			'node': 'Hadash_2013',
+			'seats': 4
+		}, {
+			'color': '#ccebc5',
+			'name': 'Meretz_2013',
+			'node': 'Meretz_2013',
+			'seats': 6
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Labour Party_2013',
+			'node': 'Labour Party_2013',
+			'seats': 15
+		}, {
+			'color': '#decbe4',
+			'name': 'Hatnua_2013',
+			'node': 'Hatnua_2013',
+			'seats': 6
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yesh Atid_2013',
+			'node': 'Yesh Atid_2013',
+			'seats': 19
+		}, {
+			'color': '#b3cde3',
+			'name': 'Kadima_2013',
+			'node': 'Kadima_2013',
+			'seats': 2
+		}, {
+			'color': '#b3cde3',
+			'name': 'Likud Beitenu_2013',
+			'node': 'Likud Beitenu_2013',
+			'seats': 31
+		}, {
+			'color': '#fed9a6',
+			'name': 'The Jewish Home_2013',
+			'node': 'The Jewish Home_2013',
+			'seats': 12
+		}, {
+			'color': '#999999',
+			'name': 'Shas_2013',
+			'node': 'Shas_2013',
+			'seats': 11
+		}, {
+			'color': '#4d4d4d',
+			'name': 'United Torah Judaism_2013',
+			'node': 'United Torah Judaism_2013',
+			'seats': 7
+		}, {
+			'color': '#ccebc5',
+			'name': 'Joint List_2015',
+			'node': 'Joint List_2015',
+			'seats': 13
+		}, {
+			'color': '#ccebc5',
+			'name': 'Meretz_2015',
+			'node': 'Meretz_2015',
+			'seats': 5
+		}, {
+			'color': '#fbb4ae',
+			'name': 'Zionist Union_2015',
+			'node': 'Zionist Union_2015',
+			'seats': 24
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yesh Atid_2015',
+			'node': 'Yesh Atid_2015',
+			'seats': 11
+		}, {
+			'color': '#ccebc5',
+			'name': 'Kulanu_2015',
+			'node': 'Kulanu_2015',
+			'seats': 10
+		}, {
+			'color': '#b3cde3',
+			'name': 'Likud_2015',
+			'node': 'Likud_2015',
+			'seats': 30
+		}, {
+			'color': '#b3cde3',
+			'name': 'Yisrael Beiteinu_2015',
+			'node': 'Yisrael Beiteinu_2015',
+			'seats': 6
+		}, {
+			'color': '#fed9a6',
+			'name': 'The Jewish Home_2015',
+			'node': 'The Jewish Home_2015',
+			'seats': 8
+		}, {
+			'color': '#999999',
+			'name': 'Shas_2015',
+			'node': 'Shas_2015',
+			'seats': 7
+		}, {
+			'color': '#ffffcc',
+			'name': 'Yachad_2015',
+			'node': 'Yachad_2015',
+			'seats': 0
+		}, {
+			'color': '#4d4d4d',
+			'name': 'United Torah Judaism_2015',
+			'node': 'United Torah Judaism_2015',
+			'seats': 6
+		}
+	]
+}
+
+
+    graph = data
+    var keepNodes = graph.nodes;
+     // return only the distinct / unique nodes
+     graph.nodes = d3.keys(d3.nest()
+       .key(function (d) { return d.name; })
+       .map(graph.nodes));
+
+
+     // loop through each link replacing the text with its index from node
+     graph.links.forEach(function (d, i) {
+       graph.links[i].source = graph.nodes.indexOf(graph.links[i].source);
+       graph.links[i].target = graph.nodes.indexOf(graph.links[i].target);
+     });
+
+     //now loop through each nodes to make nodes an array of objects
+     // rather than an array of strings
+     graph.nodes.forEach(function (d, i) {
+            graph.nodes[i] = { "name": handlePartyName(d), seats: keepNodes[i].seats, color: colors_dict[d] };
+     });
+
+
+  sankey
+    .nodes(graph.nodes)
+    .links(graph.links)
+    .layout(0);
+
+// add in the links
+  var link = svg.append("g").selectAll(".link")
+      .data(graph.links)
+    .enter().append("path")
+      .attr("class", "link")
+      .attr("d", path)
+      .style("stroke-width", function(d) { return Math.max(1, d.dy); })
+      .sort(function(a, b) { return b.dy - a.dy; });
+
+// add the link titles
+  link.append("title")
+        .text(function(d) {
+    		return d.source.name + " → " + 
+                d.target.name + "\n" + format(d.value); });
+
+
+// add in the nodes
+  var node = svg.append("g").selectAll(".node")
+      .data(graph.nodes)
+    .enter().append("g")
+      .attr("class", "node")
+      .attr("transform", function(d) { 
+		  return "translate(" + d.x + "," + d.y + ")"; })
+
+  node.on("mouseover", function(d) {
+  					tooltip.style("visibility", "visible")
+									tooltip.html("<b>" + d.name + "</b>" + (d.seats? ("<br>" + d.seats) + ' seats':''))
+	link.transition()        
+        .duration(700)
+		.style("opacity", .1);
+	link.filter(function(s) { return d.name == s.source.name; }).transition()        
+        .duration(700)
+		.style("opacity", 1);
+	link.filter(function(t) { return d.name == t.target.name; }).transition()        
+        .duration(700)
+		.style("opacity", 1);
+	})
+	.on("mouseout", function(d) { svg.selectAll(".link").transition()        
+        .duration(2000)
+		.style("opacity", 1)
+		tooltip.style("visibility", "hidden")
+		} )
+	.on("mousemove", function(){return tooltip.style("top", (event.pageY-10)+"px").style("left",(event.pageX+10)+"px");})
+    .call(d3.behavior.drag()
+      .origin(function(d) { return d; }))
+      .on("dragstart", function() { 
+		  this.parentNode.appendChild(this); })
+      .on("drag", dragmove)
+
+// add the rectangles for the nodes
+
+	  rects = node.append("rect")
+	      .attr("height", function(d) { return d.dy; })
+	      .attr("width", sankey.nodeWidth())
+	        .style('fill', function(d) {return d.color})
+	      .style("stroke", function(d) { 
+			  return d3.rgb(d.color).darker(2); });
+
+
+
+// add in the title for the nodes
+  node.append("text")
+      .attr("x", -6)
+      .attr("y", function(d) { return d.dy / 2; })
+      .attr("dy", ".35em")
+      .attr("text-anchor", "end")
+      .attr("font-size", 15)
+      .attr("transform", null)
+      .text(function(d) { return d.name.slice(0, d.name.length - 6); })
+    .filter(function(d) { return d.x < width / 2; })
+      .attr("x", 6 + sankey.nodeWidth())
+      .attr("text-anchor", "start");
+
+
+ 	  	  
+// });
+
+
+// the function for moving the nodes
+  function dragmove(d) {
+    d3.select(this).attr("transform", 
+        "translate(" + d.x + "," + (
+                d.y = Math.max(0, Math.min(height - d.dy, d3.event.y))
+            ) + ")");
+    sankey.relayout();
+    link.attr("d", path);
+  }
+
+
+
+</script>
+
+</body>
+</html>
