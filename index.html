@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>SANKEY Experiment</title>
 <link href="https://fonts.googleapis.com/css?family=Source+Sans+Pro" rel="stylesheet">	
+<script src="https://cdnjs.cloudflare.com/ajax/libs/numeral.js/2.0.6/numeral.min.js"></script>
 <style>
 	* {		
 		font-family: 'Source Sans Pro', sans-serif;		
@@ -1688,12 +1689,10 @@ var data = {
       .style("stroke-width", function(d) { return Math.max(1, d.dy); })
       .sort(function(a, b) { return b.dy - a.dy; });
 
-// add the link titles
-  link.append("title")
-        .text(function(d) {
-    		return d.source.name + " → " + 
-                d.target.name + "\n" + format(d.value); });
-
+  createHover(link, function(d) {
+	var number = ((d.value / d.source.value) * d.source.seats).toFixed(1);;
+	return numeral(number).value() + ' מושבים';
+  });
 
 // add in the nodes
   var node = svg.append("g").selectAll(".node")
@@ -1703,10 +1702,15 @@ var data = {
       .attr("transform", function(d) { 
 		  return "translate(" + d.x + "," + d.y + ")"; })
 
-  node.on("mouseover", function(d) {
-					tooltip.style("visibility", "visible")
-  					tooltip.style("direction", "rtl")
-									tooltip.html("<b>" + d.name + "</b>" + "<br>" + d.seats + ' מושבים')
+  createHover(node, function(d) {
+	  return "<b>" + d.name + "</b>" + "<br>" + d.seats + ' מושבים';
+  });
+
+function createHover(node, getTooltipText){
+	node.on("mouseover", function(d) {
+		tooltip.style("visibility", "visible")
+		tooltip.style("direction", "rtl")
+		tooltip.html(getTooltipText(d));
 	link.transition()        
         .duration(700)
 		.style("opacity", .1);
@@ -1728,6 +1732,8 @@ var data = {
       .on("dragstart", function() { 
 		  this.parentNode.appendChild(this); })
       .on("drag", dragmove)
+}
+
 
 // add the rectangles for the nodes
 
