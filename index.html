@@ -1692,7 +1692,7 @@ var data = {
   createHover(link, function(d) {
 	var number = (d.value / d.source.sourceLinks.map(x=>x.value).reduce((a,b)=>a+b, 0));
 	return numeral(number).format("0.0%");
-  });
+  }, true);
 
 // add in the nodes
   var node = svg.append("g").selectAll(".node")
@@ -1706,20 +1706,22 @@ var data = {
 	  return "<b>" + d.name + "</b>" + "<br>" + d.seats + ' מושבים';
   });
 
-function createHover(node, getTooltipText){
+function createHover(node, getTooltipText, keepOpacity){
 	node.on("mouseover", function(d) {
 		tooltip.style("visibility", "visible")
 		tooltip.style("direction", "rtl")
 		tooltip.html(getTooltipText(d));
-	link.transition()        
-        .duration(700)
-		.style("opacity", .1);
-	link.filter(function(s) { return d.name == s.source.name; }).transition()        
-        .duration(700)
-		.style("opacity", 1);
-	link.filter(function(t) { return d.name == t.target.name; }).transition()        
-        .duration(700)
-		.style("opacity", 1);
+		if(!keepOpacity) {
+			link.transition()        
+				.duration(700)
+				.style("opacity", .1);
+			link.filter(function(s) { return d.name == s.source.name; }).transition()        
+				.duration(700)
+				.style("opacity", 1);
+			link.filter(function(t) { return d.name == t.target.name; }).transition()        
+				.duration(700)
+				.style("opacity", 1);
+		}
 	})
 	.on("mouseout", function(d) { svg.selectAll(".link").transition()        
         .duration(2000)
