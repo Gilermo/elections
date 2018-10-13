@@ -421,8 +421,44 @@ var sankey = d3.sankey()
 var path = sankey.link();
 
 function handlePartyName(str){
-	return str.replace(/[_-]/g, ' ').replace(/([0-9]{4})/, '($1)');
+	var partyEngName = str.replace(/[_-]/g, ' ').replace(/([0-9]{4})/, '').trim();
+	return  (hebrewTranslation[partyEngName] || partyEngName) +  '      '; //hebrew - the d3 goes crazy without the spaces
 }
+
+var hebrewTranslation = {
+    'Madaa Raam': '',
+    'Hadash Balad': 'חד"ש - בל"ד',
+    'Meretz': 'מרצ',
+    'Labour Party': 'העבודה',
+    'Third Way': '',
+    'Likud': 'הליכוד',
+    'Yisrael Baaliya': 'ישראל בעליה',
+    'National Religious Party': '',
+    'Moledet': 'מולדת',
+    'Shas': 'ש"ס',
+    'United Torah Judaism': 'יהדות התורה',
+    'Raam': 'רע"מ',
+    'Balad': 'בל"ד',
+    'Hadash': 'חד"ש',
+    'One Nation': '',
+    'Shinui': 'שינוי',
+    'Centre Party': '',
+    'Yisrael Beitenu': 'ישראל ביתנו',
+    'National Union': '',
+    'Hadash Taal': 'חד"ש - תע"ל',
+    'Raam Taal': 'רע"מ - תע"ל',
+    'Senior Citizens Party': 'גימלאים',
+    'Kadima': 'קדימה',
+    'Hatnua': '',
+    'Yesh Atid': 'יש עתיד',
+    'Likud Beitenu': 'הליכוד ביתנו',
+    'The Jewish Home': 'הבית היהודי',
+    'Joint List': 'הרשימה המשותפת',
+    'Zionist Union': 'המחנה הציוני',
+    'Kulanu': 'כולנו',
+    'Yisrael Beiteinu': 'ישראל ביתנו', //double
+    'Yachad': 'יחד'
+  };
 
 var colors_dict = {'Balad_1999': '#f46d43',
  'Balad_2003': '#f46d43',
@@ -1668,8 +1704,9 @@ var data = {
 		  return "translate(" + d.x + "," + d.y + ")"; })
 
   node.on("mouseover", function(d) {
-  					tooltip.style("visibility", "visible")
-									tooltip.html("<b>" + d.name + "</b>" + (d.seats? ("<br>" + d.seats) + ' seats':''))
+					tooltip.style("visibility", "visible")
+  					tooltip.style("direction", "rtl")
+									tooltip.html("<b>" + d.name + "</b>" + "<br>" + d.seats + ' מושבים')
 	link.transition()        
         .duration(700)
 		.style("opacity", .1);
