@@ -423,7 +423,7 @@ var path = sankey.link();
 
 function handlePartyName(str){
 	var partyEngName = str.replace(/[_-]/g, ' ').replace(/([0-9]{4})/, '').trim();
-	return  (hebrewTranslation[partyEngName] || partyEngName) +  '      '; //hebrew - the d3 goes crazy without the spaces
+	return  (hebrewTranslation[partyEngName] || partyEngName) ; //hebrew
 }
 
 var hebrewTranslation = {
@@ -1750,20 +1750,13 @@ function createHover(node, getTooltipText, keepOpacity){
 
 // add in the title for the nodes
   node.append("text")
-      .attr("x", -6)
       .attr("y", function(d) { return d.dy / 2; })
-      .attr("dy", ".35em")
-      .attr("text-anchor", "end")
+      .attr("dy", ".4em")
       .attr("font-size", 15)
-      .attr("transform", null)
-      .text(function(d) { return d.name.slice(0, d.name.length - 6); })
-    .filter(function(d) { return d.x < width / 2; })
+	  .style('font-weight', 'bold')
+      .text(function(d) { return d.name; })
       .attr("x", 6 + sankey.nodeWidth())
       .attr("text-anchor", "start");
-
-
- 	  	  
-// });
 
 
 // the function for moving the nodes
