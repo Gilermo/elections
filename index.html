@@ -2,7 +2,6 @@
 <meta charset="utf-8">
 <title>SANKEY Experiment</title>
 <link href="https://fonts.googleapis.com/css?family=Source+Sans+Pro" rel="stylesheet">	
-<script src="https://cdnjs.cloudflare.com/ajax/libs/numeral.js/2.0.6/numeral.min.js"></script>
 <style>
 	* {		
 		font-family: 'Source Sans Pro', sans-serif;		
@@ -1691,7 +1690,18 @@ var data = {
 
   createHover(link, function(d) {
 	var number = (d.value / d.source.sourceLinks.map(x=>x.value).reduce((a,b)=>a+b, 0));
-	return numeral(number).format("0.0%");
+	var percentage = (number*100).toFixed(1) + '%';
+	var target = d.target.name;
+
+	if(target.indexOf('ה') === 0) {
+		target = target.substring(1);
+	}
+
+	if(d.target.name === d.source.name) {
+		return `${percentage} המשיכו להצביע ל${target}`;
+	}
+
+	return `${percentage} ממצביעי ${d.source.name} עברו ל${target}`;
   }, true);
 
 // add in the nodes
