@@ -454,7 +454,7 @@ var hebrewTranslation = {
     'Yesh Atid': 'יש עתיד',
     'Likud Beitenu': 'הליכוד ביתנו',
     'The Jewish Home': 'הבית היהודי',
-    'Joint List': 'הרשימה המשותפת',
+    'Joint List': 'המשותפת',
     'Zionist Union': 'המחנה הציוני',
     'Kulanu': 'כולנו',
     'Yisrael Beiteinu': 'ישראל ביתנו', //double
@@ -1742,20 +1742,20 @@ function createHover(node, getTooltipText, keepOpacity){
 	  rects = node.append("rect")
 	      .attr("height", function(d) { return d.dy; })
 	      .attr("width", sankey.nodeWidth())
-	        .style('fill', function(d) {return d.color})
+	      .style('fill', function(d) {return d.color})
 	      .style("stroke", function(d) { 
-			  return d3.rgb(d.color).darker(2); });
+			  return d3.rgb(d.color).darker(1); });
 
 
 
 // add in the title for the nodes
   node.append("text")
-      .attr("y", function(d) { return d.dy / 2; })
+      .attr("y", function(d) { return d.dy + 10; })
       .attr("dy", ".4em")
       .attr("font-size", 15)
 	  .style('font-weight', 'bold')
       .text(function(d) { return d.name; })
-      .attr("x", 6 + sankey.nodeWidth())
+      .attr("x", "0px")
       .attr("text-anchor", "start");
 
 
